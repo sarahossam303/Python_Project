@@ -1,0 +1,201 @@
+import socket
+import platform
+import os
+import sys
+import string
+import iptc
+import subprocess 
+import threading
+from scapy.all import *
+from pymsgbox import *
+import smtplib
+import ssl
+
+
+
+
+def print_summary(pkt):
+    if IP in pkt:
+        ip_src=pkt[IP].src
+        ip_dst=pkt[IP].dst
+
+    print (" IP src " + str(ip_src) )
+    print (" IP dst " + str(ip_dst) )
+
+    if ( pkt[IP].src in live_hosts_list ):
+        alert(text='ACCEPTED', title='Alert', button='OK')
+    else:
+        alert(text='REFUSED', title='Alert', button='OK')
+
+
+
+def check_live_hosts():
+
+
+    net= input("please enter the network you want to scan ")
+    net1=net.split('.')
+    a='.'
+    net2=net1[0]+a+net1[1]+a+net1[2]+a
+    print(net2)
+    firstip = int( input("please enter first ip range except (0,1,255)"))
+    lastip = int( input("please enter last ip range except (0,1,255)"))
+    lastip=lastip+1
+    global range_ip
+    global live_hosts_list
+    live_hosts_list=[]
+    range_ip=net2+str(firstip)+'-'+net2+str(lastip)
+    print(range_ip)
+    for ping in range(firstip,lastip): 
+        address = net2+ str(ping) 
+        res = subprocess.call(['ping', '-c', '3', address]) 
+        if res == 0: 
+            print( "ping to", address, "OK") 
+            live_hosts_list.append(address)
+        elif res == 2: 
+            print("no response from", address) 
+        else: 
+            print("ping to", address, "failed!") 
+
+def scanner():
+
+    print("live_hosts_list   :  is  "+str(live_hosts_list))
+    port_list=[]
+    #targetip= input("enter target ip ")
+    start=int(input("enter starting port "))
+    end=int(input("enter ending port "))
+    for x in live_hosts_list:
+        try:
+            for i in range(start,end):
+                sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                info=(x,i)
+                output=sock.connect_ex(info)
+                if output == 0:
+                    print("port is open: ",i)
+                    port_list.append(str(i))
+                sock.close()
+            send_to_nmap(x,port_list)
+        except socket.error as e:
+             print("server down"+str(e))
+             sys.exit()
+
+def send_to_nmap(targetip,port_list):
+
+    scanfile=open("scanfile.txt","w+")
+    str1=','.join(port_list)
+    print("tcp ports "+str1)
+    command="nmap -sV -sC "+targetip+" -p"+str1+" -T4 "
+    print(command)
+    resp=os.popen(command)
+    for line in resp.readlines():
+         print(line)
+         scanfile.write(line)
+    scanfile.close()
+
+def listner():
+
+    host_ip =''
+    unknown_port_list=[]
+    for i in range(49200,49202):
+       unknown_port_list.append(str(i))
+    for x in unknown_port_list:
+        s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        s.settimeout(10)
+        try:
+            s.bind((host_ip,int(x)))
+            print('socket bind complete')
+            s.listen(10)
+            connection,addr=s.accept()
+            print("connection from "+addr[0]+' : '+"on port: "+str(addr[1]))
+            if addr[0] in live_hosts_list:
+                sendmail()
+        except socket.timeout:
+           s.close()
+        except socket.error as msg:
+            print(''+str(msg[0])+'message'+msg[1])
+            sys.exit()
+
+def listner2():
+
+    host_ip =''
+    unknown_port_list=[]
+    for i in range(49200,49202):
+       unknown_port_list.append(str(i))
+    for x in unknown_port_list:
+        s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        s.settimeout(10)
+        try:
+            s.bind((host_ip,int(x)))
+            print('socket bind complete')
+            s.listen(10)
+            connection,addr=s.accept()
+            print("connection from "+addr[0]+' : '+"on port: "+str(addr[1]))
+            if addr[0] in live_hosts_list:
+                sendmail()
+        except socket.timeout:
+           s.close()
+        except socket.error as msg:
+            print(''+str(msg[0])+'message'+msg[1])
+            sys.exit()
+
+
+def iptables_block_ip():
+
+    unknown_port_list=[]
+    for i in range(49200,49202):
+       unknown_port_list.append(str(i))
+    for x in unknown_port_list:
+        rule = iptc.Rule()
+        rule.protocol = "tcp"
+        match = iptc.Match(rule, "tcp")
+        match.dport = str(x)
+        rule.add_match(match)
+        match = iptc.Match(rule, "iprange")
+        match.src_range = range_ip
+        match.dst_range = "127.0.0.1"
+        rule.add_match(match)
+        rule.target = iptc.Target(rule, "DROP")
+        chain = iptc.Chain(iptc.Table(iptc.Table.FILTER), "INPUT")
+        chain.insert_rule(rule)
+
+def send_mail():
+
+    port = 465  
+    smtp_server = "smtp.gmail.com"
+    sender_email = "testtt@gmail.com"  # Enter your address
+    receiver_email = "testtt@gmail.com"  # Enter receiver address
+    password = input("Type your password and press enter: ")
+    message = """\
+    Subject: alert
+
+    ip is trying to connect to unknown ports"""
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, receiver_email, message)
+    except:
+        pass
+
+print(" Netwroks Project  : ")
+
+print("First check for live hosts in the network : ")
+check_live_hosts()
+
+print("Scanning range of ports and send the open ports to nmap : ")
+scanner()
+
+print("Rule to block any connect on unknown ports : ")
+iptables_block_ip() 
+
+print("multi threading to listen on some unknown ports ")
+
+t1 = threading.Thread(target=listner, args=()) 
+t2 = threading.Thread(target=listner2, args=()) 
+t1.start() 
+t2.start() 
+t1.join() 
+t2.join() 
+print("Done!") 
+
+print("sniff the traffic and alert accepted if src ip is in the range of subnet else alert refused : ")
+sniff(filter="ip",prn=print_summary)  
