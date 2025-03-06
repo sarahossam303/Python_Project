@@ -1,0 +1,64 @@
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+def load_data(file_path):
+    """Loads compliance data from an Excel file."""
+    df = pd.read_excel(file_path, sheet_name="Compliance Checklist")
+    return df
+
+def preprocess_data(df):
+    """Combines relevant text columns for AI-based matching."""
+    df["combined_text"] = df.apply(lambda row: ' '.join(str(row[col]) for col in df.columns if pd.notna(row[col])), axis=1)
+    return df
+
+def find_best_match(vulnerability, df):
+    """Finds the best compliance clauses matching a given vulnerability."""
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(df["combined_text"])
+    
+    input_vec = vectorizer.transform([vulnerability])
+    similarity_scores = cosine_similarity(input_vec, tfidf_matrix).flatten()
+    
+    df["score"] = similarity_scores
+    best_matches = df.sort_values(by="score", ascending=False).head(5)
+    return best_matches[["clause/Annex", "ISO Requirement", "score"]]
+
+def search_vulnerability():
+    """Handles the GUI input and displays results."""
+    vulnerability = entry.get()
+    if not vulnerability:
+        messagebox.showwarning("Input Error", "Please enter a vulnerability description.")
+        return
+    
+    results = find_best_match(vulnerability, df)
+    result_text.delete(*result_text.get_children())
+    for _, row in results.iterrows():
+        result_text.insert("", "end", values=(row["clause/Annex"], row["ISO Requirement"], f"{row['score']:.2f}"))
+
+# Load and preprocess data
+file_path = "Enhanced_Compliance_Checklist.xlsx"
+df = load_data(file_path)
+df = preprocess_data(df)
+
+# Create GUI
+root = tk.Tk()
+root.title("AI Compliance Matching Tool")
+root.geometry("800x400")
+
+tk.Label(root, text="Enter a vulnerability:").pack(pady=5)
+entry = tk.Entry(root, width=80)
+entry.pack(pady=5)
+
+tk.Button(root, text="Search", command=search_vulnerability).pack(pady=5)
+
+columns = ("Clause/Annex", "ISO Requirement", "Score")
+result_text = ttk.Treeview(root, columns=columns, show="headings")
+for col in columns:
+    result_text.heading(col, text=col)
+    result_text.column(col, width=200)
+result_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+root.mainloop()
